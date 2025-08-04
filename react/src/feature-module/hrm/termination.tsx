@@ -1,455 +1,220 @@
-import React from 'react'
-import { Link } from 'react-router-dom'
+import React, { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import Table from "../../core/common/dataTable/index";
-import { termination_table } from '../../core/data/json/termination_table';
-import { all_routes } from '../router/all_routes';
-import ImageWithBasePath from '../../core/common/imageWithBasePath';
-import { termination, terminationtype } from '../../core/common/selectoption/selectoption';
-import CommonSelect from '../../core/common/commonSelect';
+import { all_routes } from "../router/all_routes";
+import ImageWithBasePath from "../../core/common/imageWithBasePath";
+import { termination, terminationtype } from "../../core/common/selectoption/selectoption";
+import CommonSelect from "../../core/common/commonSelect";
 import { DatePicker } from "antd";
-import CollapseHeader from '../../core/common/collapse-header/collapse-header';
+import CollapseHeader from "../../core/common/collapse-header/collapse-header";
+import { useSocket } from "../../../SocketContext";
+import TerminationModal from "../../../core/modals/terminationModal";
+import ConfirmModal from "../../../core/modals/confirmModal";
+
+const sortFieldMap = {
+  firstName: "firstName",
+  email: "email",
+  department: "department",
+  resignationDate: "resignationDate",
+  terminationType: "terminationType",
+  status: "status",
+};
 
 const Termination = () => {
-  const getModalContainer = () => {
-    const modalElement = document.getElementById('modal-datepicker');
-    return modalElement ? modalElement : document.body; // Fallback to document.body if modalElement is null
+  const { socketState: socket } = useSocket();
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Sorting state
+  const [sortBy, setSortBy] = useState("resignationDate");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+
+  // Modal and selection state
+  const [modalVisible, setModalVisible] = useState(false);
+  const [confirmVisible, setConfirmVisible] = useState(false);
+  const [selected, setSelected] = useState<any>(null);
+  const [modalMode, setModalMode] = useState<"add" | "edit">("add");
+  const [refreshFlag, setRefreshFlag] = useState(false);
+
+  // Fetch termination list via socket; respects sorting
+  const fetchTerminations = useCallback(() => {
+    if (!socket) return;
+    setLoading(true);
+    setError(null);
+    socket.emit("hr/termination/list", {
+      sortBy,
+      sortOrder,
+    }, (res: any) => {
+      if (res?.done) {
+        setData(res.data || []);
+        setLoading(false);
+      } else {
+        setData([]);
+        setError(res?.error || "Unknown error");
+        setLoading(false);
+      }
+    });
+  }, [socket, sortBy, sortOrder]);
+
+  // Effect: initial and on refresh/listen real-time
+  useEffect(() => {
+    if (!socket) return;
+    fetchTerminations();
+    socket.on("hr/termination/list-response", (res: any) => {
+      if (res?.done) setData(res.data || []);
+    });
+    return () => {
+      if (!socket) return;
+      socket.off("hr/termination/list-response");
+    };
+  }, [socket, fetchTerminations, refreshFlag]);
+
+  // Socket-based CRUD operations
+  const handleAdd = (terminationData) => {
+    if (!socket) return;
+    socket.emit("hr/termination/add", { 
+      employeeId: terminationData.employeeId, 
+      terminationData 
+    }, (res) => {
+      if (res.done) setModalVisible(false);
+      else setError(res.error || "Failed to add termination");
+      setRefreshFlag(f => !f);
+    });
   };
 
+  const handleEdit = (employeeId, updateData) => {
+    if (!socket) return;
+    socket.emit("hr/termination/edit", { employeeId, updateData }, (res) => {
+      if (res.done) setModalVisible(false);
+      else setError(res.error || "Failed to update termination");
+      setRefreshFlag(f => !f);
+    });
+  };
 
-  const data = termination_table;
+  const handleDelete = (employeeId) => {
+    if (!socket) return;
+    socket.emit("hr/termination/delete", { employeeId }, (res) => {
+      setConfirmVisible(false);
+      setSelected(null);
+      if (!res.done) setError(res.error || "Failed to delete");
+      setRefreshFlag(f => !f);
+    });
+  };
+
+  // Sorting handler: triggered by AntD Table
+  const onTableChange = (pagination, filters, sorter) => {
+    const field = sortFieldMap[sorter.field] || "resignationDate";
+    const order = sorter.order === "ascend" ? "asc" : "desc";
+    setSortBy(field);
+    setSortOrder(order);
+  };
+
+  // Table columns -- add Ant Design sorter for each sortable field
   const columns = [
     {
       title: "Resigning Employee",
-      dataIndex: "ResigningEmployee",
-      render: (text: String, record: any) => (
-        <div className="d-flex align-items-center">
-          <Link to={all_routes.invoiceDetails} className="avatar avatar-md me-2">
-            <ImageWithBasePath
-              src={`assets/img/users/${record.Image}`}
-              className="rounded-circle"
-              alt="user"
-            />
-          </Link>
-          <h6 className="fw-medium">
-            <Link to={all_routes.invoiceDetails}>{record.Resigning_Employee}</Link>
-          </h6>
-        </div>
-
-
+      dataIndex: "firstName",
+      sorter: true,
+      sortOrder: sortBy === "firstName" ? (sortOrder === "asc" ? "ascend" : "descend") : false,
+      render: (_: any, record: any) => (
+        <>
+          <span>{record.firstName} {record.lastName}</span>
+        </>
       ),
-      sorter: (a: any, b: any) => a.ResigningEmployee.length - b.ResigningEmployee.length,
+    },
+    {
+      title: "Email",
+      dataIndex: "email",
+      sorter: true,
+      sortOrder: sortBy === "email" ? (sortOrder === "asc" ? "ascend" : "descend") : false,
     },
     {
       title: "Department",
-      dataIndex: "Department",
-      sorter: (a: any, b: any) => a.Department.length - b.Department.length,
-    },
-    {
-      title: "Termination Type",
-      dataIndex: "Termination_Type",
-      sorter: (a: any, b: any) => a.Termination_Type.length - b.Termination_Type.length,
-    },
-    {
-      title: "Notice Date",
-      dataIndex: "Notice_Date",
-      sorter: (a: any, b: any) => a.Notice_Date.length - b.Notice_Date.length,
-    },
-    {
-      title: "Reason",
-      dataIndex: "Reason",
-      sorter: (a: any, b: any) => a.Reason.length - b.Reason.length,
+      dataIndex: "department",
+      sorter: true,
+      sortOrder: sortBy === "department" ? (sortOrder === "asc" ? "ascend" : "descend") : false,
     },
     {
       title: "Resignation Date",
-      dataIndex: "Resignation_Date",
-      sorter: (a: any, b: any) => a.Resignation_Date.length - b.Resignation_Date.length,
+      dataIndex: "resignationDate",
+      sorter: true,
+      sortOrder: sortBy === "resignationDate" ? (sortOrder === "asc" ? "ascend" : "descend") : false,
+      render: (val: string) => val ? new Date(val).toLocaleDateString() : "",
     },
     {
-      title: "",
-      dataIndex: "actions",
-      render: () => (
-        <div className="action-icon d-inline-flex">
-          <Link
-            to="#"
-            className="me-2"
-            data-bs-toggle="modal" data-inert={true}
-            data-bs-target="#edit_termination"
-          >
-            <i className="ti ti-edit" />
-          </Link>
-          <Link to="#" data-bs-toggle="modal" data-inert={true} data-bs-target="#delete_modal">
-            <i className="ti ti-trash" />
-          </Link>
-        </div>
-
-
+      title: "Type",
+      dataIndex: "terminationType",
+      sorter: true,
+      sortOrder: sortBy === "terminationType" ? (sortOrder === "asc" ? "ascend" : "descend") : false,
+    },
+    {
+      title: "Status",
+      dataIndex: "status",
+      sorter: true,
+      sortOrder: sortBy === "status" ? (sortOrder === "asc" ? "ascend" : "descend") : false,
+    },
+    {
+      title: "Actions",
+      render: (_text: string, record: any) => (
+        <>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => { setSelected(record); setModalMode("edit"); setModalVisible(true); }}>
+            Edit
+          </button>
+          <button
+            className="btn btn-sm btn-danger ms-2"
+            onClick={() => { setSelected(record); setConfirmVisible(true); }}>
+            Delete
+          </button>
+        </>
       ),
     },
-  ]
+  ];
+
   return (
-    <>
-      {/* Page Wrapper */}
-      <div className="page-wrapper">
-        <div className="content">
-          {/* Breadcrumb */}
-          <div className="d-md-flex d-block align-items-center justify-content-between page-breadcrumb mb-3">
-            <div className="my-auto mb-2">
-              <h2 className="mb-1">Termination</h2>
-              <nav>
-                <ol className="breadcrumb mb-0">
-                  <li className="breadcrumb-item">
-                    <Link to={all_routes.adminDashboard}>
-                      <i className="ti ti-smart-home" />
-                    </Link>
-                  </li>
-                  <li className="breadcrumb-item">Performance</li>
-                  <li className="breadcrumb-item active" aria-current="page">
-                    Termination
-                  </li>
-                </ol>
-              </nav>
-            </div>
-            <div className="d-flex my-xl-auto right-content align-items-center flex-wrap ">
-              <div className="mb-2">
-                <Link
-                  to="#"
-                  className="btn btn-primary d-flex align-items-center"
-                  data-bs-toggle="modal" data-inert={true}
-                  data-bs-target="#new_termination"
-                >
-                  <i className="ti ti-circle-plus me-2" />
-                  Add Termination
-                </Link>
-              </div>
-              <div className="head-icons ms-2">
-                <CollapseHeader />
-              </div>
-            </div>
-          </div>
-          {/* /Breadcrumb */}
-          {/* Termination List */}
-          <div className="row">
-            <div className="col-sm-12">
-              <div className="card">
-                <div className="card-header d-flex align-items-center justify-content-between flex-wrap row-gap-3">
-                  <h5 className="d-flex align-items-center">Termination List</h5>
-                  <div className="d-flex align-items-center flex-wrap row-gap-3">
-                    <div className="input-icon position-relative me-2">
-                      <span className="input-icon-addon">
-                        <i className="ti ti-calendar" />
-                      </span>
-                      <input
-                        type="text"
-                        className="form-control date-range bookingrange"
-                        placeholder="dd/mm/yyyy - dd/mm/yyyy "
-                      />
-                    </div>
-                    <div className="dropdown">
-                      <Link
-                        to="#"
-                        className="dropdown-toggle btn btn-white d-inline-flex align-items-center fs-12"
-                        data-bs-toggle="dropdown"
-                      >
-                        <p className="fs-12 d-inline-flex me-1">Sort By : </p>
-                        Last 7 Days
-                      </Link>
-                      <ul className="dropdown-menu  dropdown-menu-end p-3">
-                        <li>
-                          <Link
-                            to="#"
-                            className="dropdown-item rounded-1"
-                          >
-                            Recently Added
-                          </Link>
-                        </li>
-                        <li>
-                          <Link
-                            to="#"
-                            className="dropdown-item rounded-1"
-                          >
-                            Ascending
-                          </Link>
-                        </li>
-                        <li>
-                          <Link
-                            to="#"
-                            className="dropdown-item rounded-1"
-                          >
-                            Desending
-                          </Link>
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-                <div className="card-body p-0">
-                  <Table dataSource={data} columns={columns} Selection={true} />
-                </div>
-              </div>
-            </div>
-          </div>
-          {/* /Termination List  */}
-        </div>
-        {/* Footer */}
-        <div className="footer d-sm-flex align-items-center justify-content-between bg-white border-top p-3">
-          <p className="mb-0">2014 - 2025 © SmartHR.</p>
-          <p>
-            Designed &amp; Developed By{" "}
-            <Link to="#" className="text-primary">
-              Dreams
-            </Link>
-          </p>
-        </div>
-        {/* /Footer */}
+    <div className="container-xxl">
+      <CollapseHeader title="Termination Management" />
+      <div className="mb-3 d-flex justify-content-between align-items-center">
+        <button
+          className="btn btn-success"
+          onClick={() => { setModalMode("add"); setSelected(null); setModalVisible(true); }}
+        >
+          Add Termination
+        </button>
+        {error && <span className="text-danger ms-3">{error}</span>}
       </div>
-      {/* /Page Wrapper */}
-      <>
-        {/* Add Termination */}
-        <div className="modal fade" id="new_termination">
-          <div className="modal-dialog modal-dialog-centered modal-md">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h4 className="modal-title">Add Termination</h4>
-                <button
-                  type="button"
-                  className="btn-close custom-btn-close"
-                  data-bs-dismiss="modal"
-                  aria-label="Close"
-                >
-                  <i className="ti ti-x" />
-                </button>
-              </div>
-              <form>
-                <div className="modal-body pb-0">
-                  <div className="row">
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">
-                          Terminated Employee&nbsp;
-                        </label>
-                        <CommonSelect
-                          className="select"
-                          options={termination}
-                        />
-                      </div>
-                    </div>
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">Termination Type</label>
-                        <CommonSelect
-                          className="select"
-                          options={terminationtype}
-                        />
-                      </div>
-                    </div>
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">Notice Date</label>
-                        <div className="input-icon-end position-relative">
-                          <DatePicker
-                            className="form-control datetimepicker"
-                            format={{
-                              format: "DD-MM-YYYY",
-                              type: "mask",
-                            }}
-                            getPopupContainer={getModalContainer}
-                            placeholder="DD-MM-YYYY"
-                          />
-                          <span className="input-icon-addon">
-                            <i className="ti ti-calendar text-gray-7" />
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">Reason</label>
-                        <textarea
-                          className="form-control"
-                          rows={3}
-                          defaultValue={""}
-                        />
-                      </div>
-                    </div>
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">Resignation Date</label>
-                        <div className="input-icon-end position-relative">
-                          <DatePicker
-                            className="form-control datetimepicker"
-                            format={{
-                              format: "DD-MM-YYYY",
-                              type: "mask",
-                            }}
-                            getPopupContainer={getModalContainer}
-                            placeholder="DD-MM-YYYY"
-                          />
-                          <span className="input-icon-addon">
-                            <i className="ti ti-calendar text-gray-7" />
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-white border me-2"
-                    data-bs-dismiss="modal"
-                  >
-                    Cancel
-                  </button>
-                  <button type="button" data-bs-dismiss="modal" className="btn btn-primary">
-                    Add Termination
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-        {/* /Add Termination */}
-        {/* Edit Termination */}
-        <div className="modal fade" id="edit_termination">
-          <div className="modal-dialog modal-dialog-centered modal-md">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h4 className="modal-title">Edit Termination</h4>
-                <button
-                  type="button"
-                  className="btn-close custom-btn-close"
-                  data-bs-dismiss="modal"
-                  aria-label="Close"
-                >
-                  <i className="ti ti-x" />
-                </button>
-              </div>
-              <form>
-                <div className="modal-body pb-0">
-                  <div className="row">
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">
-                          Terminated Employee&nbsp;
-                        </label>
-                        <input
-                          type="text"
-                          className="form-control"
-                          defaultValue="Anthony Lewis"
-                        />
-                      </div>
-                    </div>
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">Termination Type</label>
-                        <CommonSelect
-                          className="select"
-                          defaultValue={terminationtype[1]}
-                          options={terminationtype}
-                        />
-                      </div>
-                    </div>
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">Notice Date</label>
-                        <div className="input-icon-end position-relative">
-                          <DatePicker
-                            className="form-control datetimepicker"
-                            format={{
-                              format: "DD-MM-YYYY",
-                              type: "mask",
-                            }}
-                            getPopupContainer={getModalContainer}
-                            placeholder="DD-MM-YYYY"
-                          />
-                          <span className="input-icon-addon">
-                            <i className="ti ti-calendar text-gray-7" />
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">Reason</label>
-                        <textarea
-                          className="form-control"
-                          rows={3}
-                          defaultValue={"Employee retires"}
-                        />
-                      </div>
-                    </div>
-                    <div className="col-md-12">
-                      <div className="mb-3">
-                        <label className="form-label">Resignation Date</label>
-                        <div className="input-icon-end position-relative">
-                          <DatePicker
-                            className="form-control datetimepicker"
-                            format={{
-                              format: "DD-MM-YYYY",
-                              type: "mask",
-                            }}
-                            getPopupContainer={getModalContainer}
-                            placeholder="DD-MM-YYYY"
-                          />
-                          <span className="input-icon-addon">
-                            <i className="ti ti-calendar text-gray-7" />
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-white border me-2"
-                    data-bs-dismiss="modal"
-                  >
-                    Cancel
-                  </button>
-                  <button type="button" data-bs-dismiss="modal" className="btn btn-primary">
-                    Save Changes
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-        {/* /Edi Termination */}
-        {/* Delete Modal */}
-        <div className="modal fade" id="delete_modal">
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content">
-              <div className="modal-body text-center">
-                <span className="avatar avatar-xl bg-transparent-danger text-danger mb-3">
-                  <i className="ti ti-trash-x fs-36" />
-                </span>
-                <h4 className="mb-1">Confirm Delete</h4>
-                <p className="mb-3">
-                  You want to delete all the marked items, this cant be undone once
-                  you delete.
-                </p>
-                <div className="d-flex justify-content-center">
-                  <Link
-                    to="#"
-                    className="btn btn-light me-3"
-                    data-bs-dismiss="modal"
-                  >
-                    Cancel
-                  </Link>
-                  <Link to={all_routes.termination} className="btn btn-danger">
-                    Yes, Delete
-                  </Link>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        {/* /Delete Modal */}
-      </>
+      <Table
+        columns={columns}
+        dataSource={data}
+        loading={loading}
+        rowKey="_id"
+        pagination={false}
+        onChange={onTableChange}
+      />
+      <TerminationModal
+        visible={modalVisible}
+        mode={modalMode}
+        data={selected}
+        onOk={modalMode === "add"
+          ? handleAdd
+          : (update) => handleEdit(selected?.employeeId || selected?._id, update)
+        }
+        onCancel={() => setModalVisible(false)}
+      />
+      <ConfirmModal
+        visible={confirmVisible}
+        title="Are you sure you want to delete this termination?"
+        onOk={() => handleDelete(selected?.employeeId || selected?._id)}
+        onCancel={() => setConfirmVisible(false)}
+      />
+      <footer className="mt-4 text-center">
+        <div>2014 - 2025 © SmartHR.</div>
+        <div>Designed &amp; Developed By Dreams</div>
+      </footer>
+    </div>
+  );
+};
 
-    </>
-  )
-}
-
-export default Termination
+export default Termination;
