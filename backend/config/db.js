@@ -64,7 +64,13 @@ export const getTenantCollections = (tenantDbName) => {
     pipelines: db.collection("pipelines"),
     stages: db.collection("stages"),
     
+     // Resignation collections
+    resignation: db.collection("resignation"),
+    inprocessres: db.collection("inprocessres"),
 
+    // Termination collections
+    inprocesster: db.collection("inprocesster"),
+    termination: db.collection("termination"),
   };
 };
 
