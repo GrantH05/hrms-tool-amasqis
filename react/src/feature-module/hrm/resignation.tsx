@@ -31,18 +31,25 @@ type DepartmentRow = {
   department: string;
 }
 
+type EmployeeRow = {
+  employeeId: string;
+  firstName: string;
+  lastName: string;
+};
+
 const Resignation = () => {
   const socket = useSocket() as Socket | null;
 
   const [rows, setRows] = useState<ResignationRow[]>([]);
   const [rowsDepartments, setRowsDepartments] = useState<DepartmentRow[]>([]);
+  const [rowsEmployee, setRowsEmployee] = useState<EmployeeRow[]>([]);
   const [stats, setStats] = useState<Stats>({
     totalResignations: "0",
     recentResignations: "0",
   });
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
-  const [filterType, setFilterType] = useState<string>("thisyear");
+  const [filterType, setFilterType] = useState<string>("today");
   const [customRange, setCustomRange] = useState<{
     startDate?: string;
     endDate?: string;
@@ -168,6 +175,15 @@ const Resignation = () => {
     setLoading(false);
   }, []);
 
+    const onEmployeeListResponse = useCallback ((res:any) => {
+      if (res?.done) {
+        setRowsEmployee(res.data || []);
+      } else {
+        setRowsEmployee([]);
+      }
+      setLoading(false);
+    },[]);
+
   const onDepartmentsListResponse = useCallback((res: any) => {
     if (res?.done) {
       setRowsDepartments(res.data || []);
@@ -218,6 +234,7 @@ const Resignation = () => {
     socket.on("hr/resignation/add-resignation-response", onAddResponse);
     socket.on("hr/resignation/update-resignation-response", onUpdateResponse);
     socket.on("hr/resignation/delete-resignation-response", onDeleteResponse);
+    socket.on("hr/trainingList/get-employeeDetails-response", onEmployeeListResponse);
 
     return () => {
       socket.off("hr/resignation/resignationlist-response", onListResponse);
@@ -235,6 +252,7 @@ const Resignation = () => {
         "hr/resignation/delete-resignation-response",
         onDeleteResponse
       );
+      socket.off("hr/trainingList/get-employeeDetails-response", onEmployeeListResponse);
     };
   }, [
     socket,
@@ -244,6 +262,7 @@ const Resignation = () => {
     onAddResponse,
     onUpdateResponse,
     onDeleteResponse,
+    onEmployeeListResponse,
   ]);
 
   // fetchers
@@ -265,6 +284,14 @@ const Resignation = () => {
         if (!socket) return;
         setLoading(true);
         socket.emit("hr/resignation/departmentlist");
+      },
+      [socket]
+    );
+
+    const fetchEmployeeList = useCallback(() => {
+        if (!socket) return;
+        setLoading(true);
+        socket.emit("hr/trainingList/get-employeeDetails");
       },
       [socket]
     );
@@ -318,7 +345,7 @@ const Resignation = () => {
       noticeDate: "", // YYYY-MM-DD from DatePicker
       resignationDate: "",
     });
-    socket.emit("hr/resignation/resignationlist", { type: "alltime" });
+    socket.emit("hr/resignation/resignationlist", { type: "today" });
     socket.emit("hr/resignation/resignation-details");
   };
 
@@ -364,7 +391,7 @@ const Resignation = () => {
       resignationDate: "",
       resignationId: "",
     });
-    socket.emit("hr/resignation/resignationlist", { type: "alltime" });
+    socket.emit("hr/resignation/resignationlist", { type: "today" });
     socket.emit("hr/resignation/resignation-details");
   };
 
@@ -379,12 +406,13 @@ const Resignation = () => {
     fetchList(filterType, customRange);
     fetchDepartmentsList();
     fetchStats();
-  }, [socket, fetchList, fetchDepartmentsList, fetchStats, filterType, customRange]);
+    fetchEmployeeList();
+  }, [socket, fetchList, fetchDepartmentsList, fetchEmployeeList, fetchStats, filterType, customRange]);
 
   // ui events
   type Option = { value: string; label: string };
   const handleFilterChange = (opt: Option | null) => {
-    const value = opt?.value ?? "alltime";
+    const value = opt?.value ?? "today";
     setFilterType(value);
     if (value !== "custom") {
       setCustomRange({});
@@ -411,6 +439,13 @@ const Resignation = () => {
     }
   };
 
+    type OptionEmployee = { value: string; label: string };
+
+    const trainingEmployeeOptions: OptionEmployee[] = (rowsEmployee as any[]).map((t: any) => ({
+      value: t.employeeId,
+      label: t.firstName+" "+t.lastName+ " - "+t.employeeId,
+    }));
+
   const handleSelectionChange = (keys: React.Key[]) => {
     setSelectedKeys(keys as string[]);
   };
@@ -426,14 +461,27 @@ const Resignation = () => {
     const toOption = (val: string | undefined) =>
       val ? departmentsOptions.find(o => o.value === val) : undefined;
 
+    const empNameById = React.useMemo(() => {
+      const m = new Map<string, string>();
+      rowsEmployee.forEach(e => {
+        const name = [e.firstName, e.lastName].filter(Boolean).join(" ");
+        m.set(e.employeeId, name || e.employeeId);
+      });
+      return m;
+    }, [rowsEmployee]);
+
+
   // table columns (preserved look, wired to backend fields)
   const columns: any[] = [
     {
       title: "Resigning Employee",
       dataIndex: "employeeName",
-
-      sorter: (a: ResignationRow, b: ResignationRow) =>
-        a.employeeName.localeCompare(b.employeeName),
+      render: (empId: string) => empNameById.get(empId) || empId,
+      sorter: (a: ResignationRow, b: ResignationRow) => {
+        const nameA = empNameById.get(a.employeeName) || a.employeeName;
+        const nameB = empNameById.get(b.employeeName) || b.employeeName;
+        return nameA.localeCompare(nameB);
+      },
     },
     {
       title: "Department",
@@ -614,17 +662,17 @@ const Resignation = () => {
                   <div className="col-md-12">
                     <div className="mb-3">
                       <label className="form-label">Resigning Employee</label>
-                      <textarea
-                        className="form-control"
-                        rows={1}
-                        defaultValue={addForm.employeeName}
-                        onChange={(e) =>
-                          setAddForm({
-                            ...addForm,
-                            employeeName: e.target.value,
-                          })
-                        }
-                      />
+                      <CommonSelect
+                          className="select"
+                          options={trainingEmployeeOptions}
+                          defaultValue={addForm.employeeName}
+                          onChange={(opt: {value: string}) =>
+                            setAddForm({
+                              ...addForm,
+                              employeeName: opt.value,
+                            })
+                          }
+                        />
                     </div>
                   </div>
                   <div className="col-md-12">
@@ -669,6 +717,10 @@ const Resignation = () => {
                               noticeDate: dateString as string,
                             })
                           }
+                          value={addForm.noticeDate ? dayjs(addForm.noticeDate, "DD-MM-YYYY") : null}
+                              disabledDate={(current) => {
+                                return current && current < dayjs().startOf('day');
+                              }}
                         />
                         <span className="input-icon-addon">
                           <i className="ti ti-calendar text-gray-7" />
@@ -694,6 +746,15 @@ const Resignation = () => {
                               resignationDate: dateString as string,
                             })
                           }
+                            value={addForm.resignationDate ? dayjs(addForm.resignationDate, "DD-MM-YYYY") : null}
+                              disabledDate={(current) => {
+                                if (!current) return false;
+                                if (!addForm.noticeDate) {
+                                  return current < dayjs().startOf('day');
+                                }
+                                const noticeDate = dayjs(addForm.noticeDate, "DD-MM-YYYY");
+                                return current < noticeDate.startOf('day');
+                              }}
                         />
                         <span className="input-icon-addon">
                           <i className="ti ti-calendar text-gray-7" />
@@ -748,17 +809,17 @@ const Resignation = () => {
                       <label className="form-label">
                         Resigning Employee&nbsp;
                       </label>
-                      <input
-                        type="text"
-                        className="form-control"
-                        defaultValue={editForm.employeeName}
-                        onChange={(e) =>
-                          setEditForm({
-                            ...editForm,
-                            employeeName: e.target.value,
-                          })
-                        }
-                      />
+                      <CommonSelect
+                          className="select"
+                          options={trainingEmployeeOptions}
+                          defaultValue={editForm.employeeName}
+                          onChange={(optt: {value: string}) =>
+                            setEditForm({
+                              ...editForm,
+                              employeeName: optt.value,
+                            })
+                          }
+                        />
                     </div>
                   </div>
                   <div className="col-md-12">
@@ -805,6 +866,10 @@ const Resignation = () => {
                               noticeDate: dateString as string,
                             })
                           }
+                            value={editForm.noticeDate ? dayjs(editForm.noticeDate, "DD-MM-YYYY") : null}
+                              disabledDate={(current) => {
+                                return current && current < dayjs().startOf('day');
+                              }}
                         />
                         <span className="input-icon-addon">
                           <i className="ti ti-calendar text-gray-7" />
@@ -832,6 +897,15 @@ const Resignation = () => {
                               resignationDate: dateString as string,
                             })
                           }
+                            value={editForm.resignationDate ? dayjs(editForm.resignationDate, "DD-MM-YYYY") : null}
+                              disabledDate={(current) => {
+                                if (!current) return false;
+                                if (!editForm.noticeDate) {
+                                  return current < dayjs().startOf('day');
+                                }
+                                const noticeDate = dayjs(editForm.noticeDate, "DD-MM-YYYY");
+                                return current < noticeDate.startOf('day');
+                              }}
                         />
                         <span className="input-icon-addon">
                           <i className="ti ti-calendar text-gray-7" />
