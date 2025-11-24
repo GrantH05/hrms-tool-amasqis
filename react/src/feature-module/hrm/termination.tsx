@@ -32,18 +32,25 @@ type DepartmentRow = {
   department: string;
 }
 
+type EmployeeRow = {
+  employeeId: string;
+  firstName: string;
+  lastName: string;
+};
+
 const Termination = () => {
   const socket = useSocket() as Socket | null;
 
   const [rows, setRows] = useState<TerminationRow[]>([]);
   const [rowsDepartments, setRowsDepartments] = useState<DepartmentRow[]>([]);
+  const [rowsEmployee, setRowsEmployee] = useState<EmployeeRow[]>([]);
   const [stats, setStats] = useState<Stats>({
     totalTerminations: "0",
     recentTerminations: "0",
   });
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
-  const [filterType, setFilterType] = useState<string>("alltime");
+  const [filterType, setFilterType] = useState<string>("today");
   const [customRange, setCustomRange] = useState<{
     startDate?: string;
     endDate?: string;
@@ -172,6 +179,15 @@ const Termination = () => {
     setLoading(false);
   }, []);
 
+    const onEmployeeListResponse = useCallback ((res:any) => {
+      if (res?.done) {
+        setRowsEmployee(res.data || []);
+      } else {
+        setRowsEmployee([]);
+      }
+      setLoading(false);
+    },[]);
+
   const onDepartmentsListResponse = useCallback((res: any) => {
     if (res?.done) {
       setRowsDepartments(res.data || []);
@@ -222,6 +238,7 @@ const Termination = () => {
     socket.on("hr/termination/add-termination-response", onAddResponse);
     socket.on("hr/termination/update-termination-response", onUpdateResponse);
     socket.on("hr/termination/delete-termination-response", onDeleteResponse);
+    socket.on("hr/trainingList/get-employeeDetails-response", onEmployeeListResponse);
 
     return () => {
       socket.off("hr/termination/terminationlist-response", onListResponse);
@@ -239,6 +256,7 @@ const Termination = () => {
         "hr/termination/delete-termination-response",
         onDeleteResponse
       );
+      socket.off("hr/trainingList/get-employeeDetails-response", onEmployeeListResponse);
     };
   }, [
     socket,
@@ -248,6 +266,7 @@ const Termination = () => {
     onAddResponse,
     onUpdateResponse,
     onDeleteResponse,
+    onEmployeeListResponse,
   ]);
 
   // fetchers
@@ -269,6 +288,14 @@ const Termination = () => {
         if (!socket) return;
         setLoading(true);
         socket.emit("hr/resignation/departmentlist");
+      },
+      [socket]
+    );
+
+    const fetchEmployeeList = useCallback(() => {
+        if (!socket) return;
+        setLoading(true);
+        socket.emit("hr/trainingList/get-employeeDetails");
       },
       [socket]
     );
@@ -326,7 +353,7 @@ const Termination = () => {
       noticeDate: "", // YYYY-MM-DD from DatePicker
       terminationDate: "",
     });
-    socket.emit("hr/termination/terminationlist", { type: "alltime" });
+    socket.emit("hr/termination/terminationlist", { type: "today" });
   };
 
   const handleEditSave = () => {
@@ -377,7 +404,7 @@ const Termination = () => {
       terminationDate: "",
       terminationId: "",
     });
-    socket.emit("hr/termination/terminationlist", { type: "alltime" });
+    socket.emit("hr/termination/terminationlist", { type: "today" });
   };
 
   const fetchStats = useCallback(() => {
@@ -390,13 +417,14 @@ const Termination = () => {
     if (!socket) return;
     fetchList(filterType, customRange);
     fetchDepartmentsList();
+    fetchEmployeeList();
     fetchStats();
-  }, [socket, fetchList, fetchDepartmentsList, fetchStats, filterType, customRange]);
+  }, [socket, fetchList, fetchDepartmentsList, fetchEmployeeList, fetchStats, filterType, customRange]);
 
   // ui events
   type Option = { value: string; label: string };
   const handleFilterChange = (opt: Option | null) => {
-    const value = opt?.value ?? "alltime";
+    const value = opt?.value ?? "today";
     setFilterType(value);
     if (value !== "custom") {
       setCustomRange({});
@@ -423,6 +451,13 @@ const Termination = () => {
     }
   };
 
+    type OptionEmployee = { value: string; label: string };
+
+    const trainingEmployeeOptions: OptionEmployee[] = (rowsEmployee as any[]).map((t: any) => ({
+      value: t.employeeId,
+      label: t.firstName+" "+t.lastName+ " - "+t.employeeId,
+    }));
+
   const handleSelectionChange = (keys: React.Key[]) => {
     setSelectedKeys(keys as string[]);
   };
@@ -438,14 +473,27 @@ const Termination = () => {
     const toOption = (val: string | undefined) =>
       val ? departmentsOptions.find(o => o.value === val) : undefined;
 
+    const empNameById = React.useMemo(() => {
+      const m = new Map<string, string>();
+      rowsEmployee.forEach(e => {
+        const name = [e.firstName, e.lastName].filter(Boolean).join(" ");
+        m.set(e.employeeId, name || e.employeeId);
+      });
+      return m;
+    }, [rowsEmployee]);
+
+
   // table columns (preserved look, wired to backend fields)
   const columns: any[] = [
     {
       title: "Terminated Employee",
       dataIndex: "employeeName",
-
-      sorter: (a: TerminationRow, b: TerminationRow) =>
-        a.employeeName.localeCompare(b.employeeName),
+      render: (empId: string) => empNameById.get(empId) || empId,
+      sorter: (a: TerminationRow, b: TerminationRow) => {
+        const nameA = empNameById.get(a.employeeName) || a.employeeName;
+        const nameB = empNameById.get(b.employeeName) || b.employeeName;
+        return nameA.localeCompare(nameB);
+      },
     },
     {
       title: "Department",
@@ -655,14 +703,14 @@ const Termination = () => {
                         <label className="form-label">
                           Terminated Employee
                         </label>
-                        <textarea
-                          className="form-control"
-                          rows={1}
+                        <CommonSelect
+                          className="select"
+                          options={trainingEmployeeOptions}
                           defaultValue={addForm.employeeName}
-                          onChange={(e) =>
+                          onChange={(opt: {value: string}) =>
                             setAddForm({
                               ...addForm,
-                              employeeName: e.target.value,
+                              employeeName: opt.value,
                             })
                           }
                         />
@@ -723,6 +771,10 @@ const Termination = () => {
                                 noticeDate: dateString as string,
                               })
                             }
+                            value={addForm.noticeDate ? dayjs(addForm.noticeDate, "DD-MM-YYYY") : null}
+                              disabledDate={(current) => {
+                                return current && current < dayjs().startOf('day');
+                              }}
                           />
                           <span className="input-icon-addon">
                             <i className="ti ti-calendar text-gray-7" />
@@ -761,6 +813,15 @@ const Termination = () => {
                                 terminationDate: dateString as string,
                               })
                             }
+                            value={addForm.terminationDate ? dayjs(addForm.terminationDate, "DD-MM-YYYY") : null}
+                              disabledDate={(current) => {
+                                if (!current) return false;
+                                if (!addForm.noticeDate) {
+                                  return current < dayjs().startOf('day');
+                                }
+                                const noticeDate = dayjs(addForm.noticeDate, "DD-MM-YYYY");
+                                return current < noticeDate.startOf('day');
+                              }}
                           />
                           <span className="input-icon-addon">
                             <i className="ti ti-calendar text-gray-7" />
@@ -815,14 +876,14 @@ const Termination = () => {
                         <label className="form-label">
                           Terminated Employee&nbsp;
                         </label>
-                        <input
-                          type="text"
-                          className="form-control"
+                        <CommonSelect
+                          className="select"
+                          options={trainingEmployeeOptions}
                           defaultValue={editForm.employeeName}
-                          onChange={(e) =>
+                          onChange={(optt: {value: string}) =>
                             setEditForm({
                               ...editForm,
-                              employeeName: e.target.value,
+                              employeeName: optt.value,
                             })
                           }
                         />
@@ -885,6 +946,10 @@ const Termination = () => {
                                 noticeDate: dateString as string,
                               })
                             }
+                            value={editForm.noticeDate ? dayjs(editForm.noticeDate, "DD-MM-YYYY") : null}
+                              disabledDate={(current) => {
+                                return current && current < dayjs().startOf('day');
+                              }}
                           />
                           <span className="input-icon-addon">
                             <i className="ti ti-calendar text-gray-7" />
@@ -907,7 +972,7 @@ const Termination = () => {
                     </div>
                     <div className="col-md-12">
                       <div className="mb-3">
-                        <label className="form-label">Resignation Date</label>
+                        <label className="form-label">Termination Date</label>
                         <div className="input-icon-end position-relative">
                           <DatePicker
                             className="form-control datetimepicker"
@@ -925,6 +990,15 @@ const Termination = () => {
                                 terminationDate: dateString as string,
                               })
                             }
+                            value={editForm.terminationDate ? dayjs(editForm.terminationDate, "DD-MM-YYYY") : null}
+                              disabledDate={(current) => {
+                                if (!current) return false;
+                                if (!editForm.noticeDate) {
+                                  return current < dayjs().startOf('day');
+                                }
+                                const noticeDate = dayjs(editForm.noticeDate, "DD-MM-YYYY");
+                                return current < noticeDate.startOf('day');
+                              }}
                           />
                           <span className="input-icon-addon">
                             <i className="ti ti-calendar text-gray-7" />
